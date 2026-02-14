@@ -189,7 +189,7 @@ if st.button("🚀 Analyze ESG Performance"):
 
                         competitor_esg, _ = calculate_esg(competitor)
 
-                        st.markdown("## 🏆 ESG Benchmarking")
+                        st.markdown("## Competitor Analysis")
 
                         fig = go.Figure()
 
