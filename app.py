@@ -1,11 +1,24 @@
-# -----------------------------
-# Advanced AI Sustainability Insight
-# -----------------------------
+import streamlit as st
+import yfinance as yf
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 
-st.subheader("🤖 Advanced AI Sustainability Insight")
+st.set_page_config(page_title="AI ESG Proxy Dashboard", layout="wide")
 
-# Sidebar customization
-st.sidebar.markdown("### 🎛 Insight Customization")
+st.title("🌱 AI-Based ESG Proxy Score Dashboard")
+st.markdown("Market-Signal Driven Sustainability Intelligence")
+
+# -----------------------------
+# Sidebar Controls
+# -----------------------------
+st.sidebar.header("⚙️ Analysis Settings")
+
+company = st.sidebar.text_input(
+    "Enter Company Ticker",
+    value="AAPL"
+).upper()
+
 risk_preference = st.sidebar.selectbox(
     "Investor Risk Profile",
     ["Conservative", "Balanced", "Aggressive"]
@@ -16,51 +29,197 @@ analysis_depth = st.sidebar.selectbox(
     ["Standard", "Deep Analysis"]
 )
 
-# Risk Classification
-if volatility < 0.20:
-    risk_label = "Low Risk"
-elif volatility < 0.35:
-    risk_label = "Moderate Risk"
-else:
-    risk_label = "High Risk"
+period = st.sidebar.selectbox(
+    "Historical Period",
+    ["6mo", "1y", "2y"]
+)
 
-# ESG Rating Tier
-if esg_score >= 75:
-    rating = "Sustainability Leader 🟢"
-elif esg_score >= 55:
-    rating = "Sustainability Stable 🟡"
-else:
-    rating = "Sustainability Risk 🔴"
+if company:
 
-# Risk-Adjusted Performance Comment
-if sharpe_ratio > 1.5:
-    performance_comment = "strong risk-adjusted performance"
-elif sharpe_ratio > 0.8:
-    performance_comment = "moderate risk-adjusted efficiency"
-else:
-    performance_comment = "weak risk-adjusted return structure"
+    stock = yf.Ticker(company)
+    hist = stock.history(period=period)
 
-# Investor Alignment Logic
-alignment_comment = ""
+    if hist.empty:
+        st.error("Invalid ticker or no data available.")
+        st.stop()
 
-if risk_preference == "Conservative":
-    if volatility < 0.25:
-        alignment_comment = "This stock aligns well with conservative investors seeking stability."
+    hist["returns"] = hist["Close"].pct_change()
+    hist.dropna(inplace=True)
+
+    # -----------------------------
+    # ESG Proxy Calculation
+    # -----------------------------
+    volatility = hist["returns"].std() * np.sqrt(252)
+    mean_return = hist["returns"].mean() * 252
+    sharpe_ratio = mean_return / (volatility + 1e-6)
+
+    vol_score = 1 / (1 + volatility * 8)
+    return_score = np.clip((mean_return + 0.2) / 0.4, 0, 1)
+    sharpe_score = np.clip((sharpe_ratio + 2) / 4, 0, 1)
+
+    esg_score = (
+        vol_score * 35 +
+        return_score * 30 +
+        sharpe_score * 35
+    )
+
+    esg_score = float(np.clip(esg_score, 0, 100))
+
+    # -----------------------------
+    # ESG Gauge
+    # -----------------------------
+    st.subheader("📊 ESG Proxy Score")
+
+    gauge = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=esg_score,
+        title={'text': "ESG Proxy Score"},
+        gauge={
+            'axis': {'range': [0, 100]},
+            'steps': [
+                {'range': [0, 50], 'color': "red"},
+                {'range': [50, 75], 'color': "yellow"},
+                {'range': [75, 100], 'color': "green"}
+            ],
+        }
+    ))
+
+    st.plotly_chart(gauge, use_container_width=True)
+
+    # -----------------------------
+    # Price Chart
+    # -----------------------------
+    st.subheader("📈 Price Trend")
+
+    hist["MA50"] = hist["Close"].rolling(50).mean()
+
+    fig_price = go.Figure()
+    fig_price.add_trace(go.Scatter(x=hist.index, y=hist["Close"], name="Close Price"))
+    fig_price.add_trace(go.Scatter(x=hist.index, y=hist["MA50"], name="50-Day MA"))
+    fig_price.update_layout(hovermode="x unified")
+
+    st.plotly_chart(fig_price, use_container_width=True)
+
+    # -----------------------------
+    # Rolling Volatility
+    # -----------------------------
+    st.subheader("⚠️ Rolling Volatility (30-Day)")
+
+    hist["rolling_vol"] = hist["returns"].rolling(30).std() * np.sqrt(252)
+
+    fig_vol = go.Figure()
+    fig_vol.add_trace(go.Scatter(
+        x=hist.index,
+        y=hist["rolling_vol"],
+        name="Rolling Volatility"
+    ))
+    fig_vol.update_layout(hovermode="x unified")
+
+    st.plotly_chart(fig_vol, use_container_width=True)
+
+    # -----------------------------
+    # Sector & Competitor
+    # -----------------------------
+    sector_competitors = {
+        "Technology": ["AAPL", "MSFT", "GOOGL", "NVDA"],
+        "Financial Services": ["JPM", "BAC", "WFC"],
+        "Energy": ["XOM", "CVX"],
+        "Consumer Cyclical": ["AMZN", "TSLA"],
+        "Healthcare": ["JNJ", "PFE"]
+    }
+
+    info = stock.info
+    sector = info.get("sector", "Unknown")
+
+    competitor = None
+    if sector in sector_competitors:
+        possible = [c for c in sector_competitors[sector] if c != company]
+        competitor = possible[0] if possible else None
+
+    st.subheader("🏭 Sector Overview")
+    st.write("Sector:", sector)
+    st.write("Auto-Selected Competitor:", competitor)
+
+    # -----------------------------
+    # ESG Comparison
+    # -----------------------------
+    def calculate_esg(ticker):
+        s = yf.Ticker(ticker)
+        h = s.history(period=period)
+
+        if h.empty:
+            return None
+
+        h["returns"] = h["Close"].pct_change()
+        h.dropna(inplace=True)
+
+        vol = h["returns"].std() * np.sqrt(252)
+        mean_ret = h["returns"].mean() * 252
+        sharpe = mean_ret / (vol + 1e-6)
+
+        vol_s = 1 / (1 + vol * 8)
+        ret_s = np.clip((mean_ret + 0.2) / 0.4, 0, 1)
+        sharpe_s = np.clip((sharpe + 2) / 4, 0, 1)
+
+        score = vol_s * 35 + ret_s * 30 + sharpe_s * 35
+        return float(np.clip(score, 0, 100))
+
+    if competitor:
+        comp_score = calculate_esg(competitor)
+
+        st.subheader("📊 ESG Comparison")
+
+        fig_comp = go.Figure()
+        fig_comp.add_trace(go.Bar(x=[company], y=[esg_score], name=company))
+        fig_comp.add_trace(go.Bar(x=[competitor], y=[comp_score], name=competitor))
+        fig_comp.update_layout(yaxis=dict(range=[0, 100]))
+
+        st.plotly_chart(fig_comp, use_container_width=True)
+
+    # -----------------------------
+    # Advanced AI Sustainability Insight
+    # -----------------------------
+    st.subheader("🤖 AI Sustainability Insight")
+
+    # Risk Label
+    if volatility < 0.20:
+        risk_label = "Low Risk"
+    elif volatility < 0.35:
+        risk_label = "Moderate Risk"
     else:
-        alignment_comment = "Volatility levels may exceed conservative investor comfort."
-elif risk_preference == "Balanced":
-    alignment_comment = "This stock may suit balanced portfolios combining growth and stability."
-else:
-    alignment_comment = "Higher volatility could benefit aggressive investors targeting alpha."
+        risk_label = "High Risk"
 
-# Core Insight
-st.markdown(f"""
-### 📊 Company Overview: {company}
+    # Rating Tier
+    if esg_score >= 75:
+        rating = "Sustainability Leader 🟢"
+    elif esg_score >= 55:
+        rating = "Sustainability Stable 🟡"
+    else:
+        rating = "Sustainability Risk 🔴"
+
+    # Performance Comment
+    if sharpe_ratio > 1.5:
+        performance_comment = "strong risk-adjusted efficiency"
+    elif sharpe_ratio > 0.8:
+        performance_comment = "moderate efficiency"
+    else:
+        performance_comment = "weak risk-adjusted structure"
+
+    # Investor Fit
+    if risk_preference == "Conservative":
+        alignment = "Suitable for conservative portfolios seeking stability." if volatility < 0.25 else "Volatility may exceed conservative tolerance."
+    elif risk_preference == "Balanced":
+        alignment = "Fits balanced portfolios blending growth and stability."
+    else:
+        alignment = "May appeal to aggressive investors targeting alpha."
+
+    st.markdown(f"""
+### 📊 Company: {company}
 
 **Sector:** {sector}  
-**Risk Category:** {risk_label}  
 **ESG Proxy Score:** {round(esg_score,2)} / 100  
-**ESG Rating Tier:** {rating}  
+**Risk Category:** {risk_label}  
+**Rating Tier:** {rating}
 
 ---
 
@@ -68,52 +227,28 @@ st.markdown(f"""
 
 • Annual Return: **{round(mean_return*100,2)}%**  
 • Annual Volatility: **{round(volatility,3)}**  
-• Sharpe Ratio: **{round(sharpe_ratio,2)}**  
+• Sharpe Ratio: **{round(sharpe_ratio,2)}**
 
-The company demonstrates **{performance_comment}**, indicating how efficiently it converts risk into returns.
-
----
-
-### 🎯 Investor Fit Analysis
-
-{alignment_comment}
+The company demonstrates **{performance_comment}**.
 
 ---
+
+### 🎯 Investor Fit
+
+{alignment}
 """)
 
-# Deep Analysis Layer
-if analysis_depth == "Deep Analysis":
+    if analysis_depth == "Deep Analysis":
 
-    stability_score = vol_score * 100
-    growth_score = return_score * 100
-    efficiency_score = sharpe_score * 100
+        st.markdown(f"""
+### 🔬 Deep Breakdown
 
-    st.markdown(f"""
-### 🔬 Deep ESG Signal Breakdown
+**Stability Score:** {round(vol_score*100,1)}  
+**Growth Score:** {round(return_score*100,1)}  
+**Efficiency Score:** {round(sharpe_score*100,1)}
 
-**Stability Component (Volatility-Based):** {round(stability_score,1)}  
-Higher score indicates controlled downside fluctuations.
+Lower volatility often reflects disciplined governance and institutional confidence.  
+Higher Sharpe ratios indicate efficient capital allocation.
 
-**Growth Component (Return-Based):** {round(growth_score,1)}  
-Captures long-term appreciation strength.
-
-**Efficiency Component (Sharpe-Based):** {round(efficiency_score,1)}  
-Measures risk-adjusted capital allocation efficiency.
-
----
-
-### 🧠 AI Interpretation
-
-From a proxy ESG standpoint, {company} reflects market-perceived governance quality through volatility discipline and capital efficiency.
-
-Lower volatility often correlates with:
-- Strong governance
-- Predictable operations
-- Institutional investor confidence
-
-Higher Sharpe ratios indicate:
-- Efficient capital management
-- Strategic risk positioning
-
-Overall, the sustainability outlook suggests a **{rating}** profile within the {sector} sector.
+Overall, {company} positions itself as a **{rating}** entity within the {sector} sector.
 """)
