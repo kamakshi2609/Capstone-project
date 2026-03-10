@@ -34,10 +34,44 @@ period = st.sidebar.selectbox(
     ["6mo", "1y", "2y"]
 )
 
+# -----------------------------
+# Sector Mapping (avoids rate limit)
+# -----------------------------
+ticker_sector_map = {
+    "AAPL": "Technology",
+    "MSFT": "Technology",
+    "GOOGL": "Technology",
+    "NVDA": "Technology",
+    "AMZN": "Consumer Cyclical",
+    "TSLA": "Consumer Cyclical",
+    "JPM": "Financial Services",
+    "BAC": "Financial Services",
+    "WFC": "Financial Services",
+    "XOM": "Energy",
+    "CVX": "Energy",
+    "JNJ": "Healthcare",
+    "PFE": "Healthcare"
+}
+
+sector_competitors = {
+    "Technology": ["AAPL", "MSFT", "GOOGL", "NVDA"],
+    "Financial Services": ["JPM", "BAC", "WFC"],
+    "Energy": ["XOM", "CVX"],
+    "Consumer Cyclical": ["AMZN", "TSLA"],
+    "Healthcare": ["JNJ", "PFE"]
+}
+
+# -----------------------------
+# Cached Data Loader
+# -----------------------------
+@st.cache_data
+def load_data(ticker, period):
+    data = yf.download(ticker, period=period, progress=False)
+    return data
+
 if company:
 
-    stock = yf.Ticker(company)
-    hist = stock.history(period=period)
+    hist = load_data(company, period)
 
     if hist.empty:
         st.error("Invalid ticker or no data available.")
@@ -113,6 +147,7 @@ if company:
         y=hist["rolling_vol"],
         name="Rolling Volatility"
     ))
+
     fig_vol.update_layout(hovermode="x unified")
 
     st.plotly_chart(fig_vol, use_container_width=True)
@@ -120,16 +155,7 @@ if company:
     # -----------------------------
     # Sector & Competitor
     # -----------------------------
-    sector_competitors = {
-        "Technology": ["AAPL", "MSFT", "GOOGL", "NVDA"],
-        "Financial Services": ["JPM", "BAC", "WFC"],
-        "Energy": ["XOM", "CVX"],
-        "Consumer Cyclical": ["AMZN", "TSLA"],
-        "Healthcare": ["JNJ", "PFE"]
-    }
-
-    info = stock.info
-    sector = info.get("sector", "Unknown")
+    sector = ticker_sector_map.get(company, "Technology")
 
     competitor = None
     if sector in sector_competitors:
@@ -143,9 +169,10 @@ if company:
     # -----------------------------
     # ESG Comparison
     # -----------------------------
+    @st.cache_data
     def calculate_esg(ticker):
-        s = yf.Ticker(ticker)
-        h = s.history(period=period)
+
+        h = yf.download(ticker, period=period, progress=False)
 
         if h.empty:
             return None
@@ -165,6 +192,7 @@ if company:
         return float(np.clip(score, 0, 100))
 
     if competitor:
+
         comp_score = calculate_esg(competitor)
 
         st.subheader("📊 ESG Comparison")
@@ -172,16 +200,16 @@ if company:
         fig_comp = go.Figure()
         fig_comp.add_trace(go.Bar(x=[company], y=[esg_score], name=company))
         fig_comp.add_trace(go.Bar(x=[competitor], y=[comp_score], name=competitor))
+
         fig_comp.update_layout(yaxis=dict(range=[0, 100]))
 
         st.plotly_chart(fig_comp, use_container_width=True)
 
     # -----------------------------
-    # Advanced AI Sustainability Insight
+    # AI Sustainability Insight
     # -----------------------------
     st.subheader("🤖 AI Sustainability Insight")
 
-    # Risk Label
     if volatility < 0.20:
         risk_label = "Low Risk"
     elif volatility < 0.35:
@@ -189,7 +217,6 @@ if company:
     else:
         risk_label = "High Risk"
 
-    # Rating Tier
     if esg_score >= 75:
         rating = "Sustainability Leader 🟢"
     elif esg_score >= 55:
@@ -197,7 +224,6 @@ if company:
     else:
         rating = "Sustainability Risk 🔴"
 
-    # Performance Comment
     if sharpe_ratio > 1.5:
         performance_comment = "strong risk-adjusted efficiency"
     elif sharpe_ratio > 0.8:
@@ -205,7 +231,6 @@ if company:
     else:
         performance_comment = "weak risk-adjusted structure"
 
-    # Investor Fit
     if risk_preference == "Conservative":
         alignment = "Suitable for conservative portfolios seeking stability." if volatility < 0.25 else "Volatility may exceed conservative tolerance."
     elif risk_preference == "Balanced":
