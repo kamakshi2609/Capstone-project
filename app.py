@@ -127,17 +127,17 @@ if company:
 
     hist["MA50"] = hist["Close"].rolling(50, min_periods=1).mean()
 
-fig, ax = plt.subplots(figsize=(12,6))
+    fig, ax = plt.subplots(figsize=(12,6))
 
-ax.plot(hist.index, hist["Close"], linewidth=2, label="Close Price")
-ax.plot(hist.index, hist["MA50"], linestyle="--", label="50-Day MA")
+    ax.plot(hist.index, hist["Close"], linewidth=2, label="Close Price")
+    ax.plot(hist.index, hist["MA50"], linestyle="--", label="50-Day MA")
 
-ax.set_title(f"{company} Price Trend")
-ax.set_xlabel("Date")
-ax.set_ylabel("Price")
-ax.legend()
+    ax.set_title(f"{company} Price Trend")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Price")
+    ax.legend()
 
-st.pyplot(fig)
+    st.pyplot(fig)
 
     # -----------------------------
     # Rolling Volatility
