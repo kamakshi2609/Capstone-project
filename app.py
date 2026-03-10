@@ -125,14 +125,19 @@ if company:
     # -----------------------------
     st.subheader("📈 Price Trend")
 
-    hist["MA50"] = hist["Close"].rolling(50).mean()
+    hist["MA50"] = hist["Close"].rolling(50, min_periods=1).mean()
 
-    fig_price = go.Figure()
-    fig_price.add_trace(go.Scatter(x=hist.index, y=hist["Close"], name="Close Price"))
-    fig_price.add_trace(go.Scatter(x=hist.index, y=hist["MA50"], name="50-Day MA"))
-    fig_price.update_layout(hovermode="x unified")
+fig, ax = plt.subplots(figsize=(12,6))
 
-    st.plotly_chart(fig_price, use_container_width=True)
+ax.plot(hist.index, hist["Close"], linewidth=2, label="Close Price")
+ax.plot(hist.index, hist["MA50"], linestyle="--", label="50-Day MA")
+
+ax.set_title(f"{company} Price Trend")
+ax.set_xlabel("Date")
+ax.set_ylabel("Price")
+ax.legend()
+
+st.pyplot(fig)
 
     # -----------------------------
     # Rolling Volatility
