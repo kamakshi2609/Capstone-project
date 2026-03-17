@@ -12,19 +12,14 @@ st.title("🌱 AI-Based ESG Proxy Score Dashboard")
 st.markdown("Market-Signal Driven Sustainability Intelligence")
 
 # -----------------------------
-# Sidebar Controls
+# Sidebar
 # -----------------------------
-st.sidebar.header("⚙️ Analysis Settings")
+st.sidebar.header("⚙️ Select Parameters")
 
-company = st.sidebar.text_input("Enter Company Ticker", value="AAPL").upper()
-
-risk_preference = st.sidebar.selectbox(
-    "Investor Risk Profile",
-    ["Conservative", "Balanced", "Aggressive"]
-)
+company = st.sidebar.text_input("Enter Ticker").upper()
 
 analysis_depth = st.sidebar.selectbox(
-    "Insight Detail Level",
+    "Analysis Type",
     ["Standard", "Deep Analysis"]
 )
 
@@ -41,203 +36,232 @@ auto_refresh = st.sidebar.checkbox("🔄 Live Price Update (5 sec)")
 ticker_sector_map = {
     "AAPL": "Technology", "MSFT": "Technology", "GOOGL": "Technology", "NVDA": "Technology",
     "AMZN": "Consumer Cyclical", "TSLA": "Consumer Cyclical",
-    "JPM": "Financial Services", "BAC": "Financial Services", "WFC": "Financial Services",
+    "JPM": "Financial Services", "BAC": "Financial Services",
     "XOM": "Energy", "CVX": "Energy",
     "JNJ": "Healthcare", "PFE": "Healthcare",
 
-    # Indian stocks
     "RELIANCE.NS": "Energy",
     "TCS.NS": "Technology",
     "INFY.NS": "Technology",
     "HDFCBANK.NS": "Financial Services",
-    "ICICIBANK.NS": "Financial Services",
-    "SBIN.NS": "Financial Services",
-    "ITC.NS": "Consumer Cyclical",
-    "HINDUNILVR.NS": "Consumer Cyclical"
+    "ICICIBANK.NS": "Financial Services"
 }
 
 sector_competitors = {
     "Technology": ["AAPL", "MSFT", "GOOGL", "NVDA"],
-    "Financial Services": ["JPM", "BAC", "WFC", "HDFCBANK.NS", "ICICIBANK.NS"],
+    "Financial Services": ["JPM", "BAC", "HDFCBANK.NS"],
     "Energy": ["XOM", "CVX", "RELIANCE.NS"],
-    "Consumer Cyclical": ["AMZN", "TSLA", "ITC.NS"],
+    "Consumer Cyclical": ["AMZN", "TSLA"],
     "Healthcare": ["JNJ", "PFE"]
 }
 
 # -----------------------------
-# Data Loader
+# Load Data
 # -----------------------------
 @st.cache_data
 def load_data(ticker, period):
     return yf.download(ticker, period=period, progress=False)
 
-if company:
+hist = load_data(company, period)
 
-    hist = load_data(company, period)
+if hist.empty:
+    st.error("Invalid ticker")
+    st.stop()
 
-    if hist.empty:
-        st.error("Invalid ticker or no data available.")
-        st.stop()
+hist["returns"] = hist["Close"].pct_change()
+hist.dropna(inplace=True)
 
-    hist["returns"] = hist["Close"].pct_change()
-    hist.dropna(inplace=True)
+# -----------------------------
+# ESG Score
+# -----------------------------
+volatility = hist["returns"].std() * np.sqrt(252)
+mean_return = hist["returns"].mean() * 252
+sharpe_ratio = mean_return / (volatility + 1e-6)
 
-    # -----------------------------
-    # ESG Calculation
-    # -----------------------------
-    volatility = hist["returns"].std() * np.sqrt(252)
-    mean_return = hist["returns"].mean() * 252
-    sharpe_ratio = mean_return / (volatility + 1e-6)
+vol_score = 1 / (1 + volatility * 8)
+return_score = np.clip((mean_return + 0.2) / 0.4, 0, 1)
+sharpe_score = np.clip((sharpe_ratio + 2) / 4, 0, 1)
 
-    vol_score = 1 / (1 + volatility * 8)
-    return_score = np.clip((mean_return + 0.2) / 0.4, 0, 1)
-    sharpe_score = np.clip((sharpe_ratio + 2) / 4, 0, 1)
+esg_score = float(np.clip(
+    vol_score * 35 + return_score * 30 + sharpe_score * 35, 0, 100
+))
 
-    esg_score = float(np.clip(
-        vol_score * 35 + return_score * 30 + sharpe_score * 35, 0, 100
+# -----------------------------
+# ESG Gauge
+# -----------------------------
+st.subheader("📊 ESG Proxy Score")
+
+gauge = go.Figure(go.Indicator(
+    mode="gauge+number",
+    value=esg_score,
+    title={'text': "ESG Score"},
+    gauge={
+        'axis': {'range': [0, 100]},
+        'steps': [
+            {'range': [0, 50], 'color': "red"},
+            {'range': [50, 75], 'color': "yellow"},
+            {'range': [75, 100], 'color': "green"}
+        ],
+    }
+))
+
+st.plotly_chart(gauge, use_container_width=True)
+
+# -----------------------------
+# LIVE PRICE TREND
+# -----------------------------
+st.subheader("📈 Live Price Trend")
+
+placeholder = st.empty()
+
+def load_live_data(ticker):
+    data = yf.download(ticker, period="1d", interval="1m", progress=False)
+    data["MA50"] = data["Close"].rolling(50).mean()
+    return data
+
+while True:
+    live = load_live_data(company)
+
+    if live.empty:
+        st.warning("No live data")
+        break
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=live.index,
+        y=live["Close"],
+        name="Price"
     ))
 
-    # -----------------------------
-    # ESG Gauge
-    # -----------------------------
-    st.subheader("📊 ESG Proxy Score")
-
-    gauge = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=esg_score,
-        title={'text': "ESG Proxy Score"},
-        gauge={
-            'axis': {'range': [0, 100]},
-            'steps': [
-                {'range': [0, 50], 'color': "red"},
-                {'range': [50, 75], 'color': "yellow"},
-                {'range': [75, 100], 'color': "green"}
-            ],
-        }
+    fig.add_trace(go.Scatter(
+        x=live.index,
+        y=live["MA50"],
+        name="MA50",
+        line=dict(dash="dash")
     ))
 
-    st.plotly_chart(gauge, use_container_width=True)
+    placeholder.plotly_chart(fig, use_container_width=True)
 
-    # -----------------------------
-    # LIVE PRICE TREND
-    # -----------------------------
-    st.subheader("📈 Live Price Trend")
+    if not auto_refresh:
+        break
 
-    placeholder = st.empty()
+    time.sleep(5)
 
-    def load_live_data(ticker):
-        data = yf.download(ticker, period="1d", interval="1m", progress=False)
-        data["MA50"] = data["Close"].rolling(50).mean()
-        return data
+# -----------------------------
+# Sector + Competitor
+# -----------------------------
+sector = ticker_sector_map.get(company, "Unknown")
 
-    while True:
+competitor = None
+if sector in sector_competitors:
+    comp_list = [c for c in sector_competitors[sector] if c != company]
+    if comp_list:
+        competitor = random.choice(comp_list)
 
-        live_data = load_live_data(company)
+st.subheader("🏭 Sector Overview")
+st.write("Sector:", sector)
+st.write("Competitor:", competitor)
 
-        if live_data.empty:
-            st.warning("No live data available")
-            break
+# -----------------------------
+# ESG Comparison
+# -----------------------------
+@st.cache_data
+def calc_esg(ticker):
+    h = yf.download(ticker, period=period, progress=False)
+    if h.empty:
+        return None
+    h["returns"] = h["Close"].pct_change()
+    h.dropna(inplace=True)
+    vol = h["returns"].std() * np.sqrt(252)
+    mean = h["returns"].mean() * 252
+    sharpe = mean / (vol + 1e-6)
 
-        fig_price = go.Figure()
-
-        fig_price.add_trace(go.Scatter(
-            x=live_data.index,
-            y=live_data["Close"],
-            name="Close Price"
-        ))
-
-        fig_price.add_trace(go.Scatter(
-            x=live_data.index,
-            y=live_data["MA50"],
-            name="MA50",
-            line=dict(dash="dash")
-        ))
-
-        fig_price.update_layout(
-            title=f"{company} Live Price",
-            template="plotly_white"
-        )
-
-        placeholder.plotly_chart(fig_price, use_container_width=True)
-
-        if not auto_refresh:
-            break
-
-        time.sleep(5)
-
-    # -----------------------------
-    # Rolling Volatility
-    # -----------------------------
-    st.subheader("⚠️ Rolling Volatility")
-
-    hist["rolling_vol"] = hist["returns"].rolling(30).std() * np.sqrt(252)
-
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Scatter(
-        x=hist.index,
-        y=hist["rolling_vol"],
-        name="Volatility"
+    return float(np.clip(
+        (1/(1+vol*8))*35 +
+        np.clip((mean+0.2)/0.4,0,1)*30 +
+        np.clip((sharpe+2)/4,0,1)*35, 0, 100
     ))
 
-    st.plotly_chart(fig_vol, use_container_width=True)
+if competitor:
+    comp_score = calc_esg(competitor)
 
-    # -----------------------------
-    # Sector + Competitor
-    # -----------------------------
-    sector = ticker_sector_map.get(company)
+    fig = go.Figure()
+    fig.add_bar(x=[company], y=[esg_score])
+    fig.add_bar(x=[competitor], y=[comp_score])
 
-    if not sector:
-        sector = "Financial Services" if company.endswith(".NS") else "Unknown"
+    st.plotly_chart(fig, use_container_width=True)
 
-    competitor = None
-    if sector in sector_competitors:
-        possible = [c for c in sector_competitors[sector] if c != company]
-        if possible:
-            competitor = random.choice(possible)
+# -----------------------------
+# AI INSIGHT
+# -----------------------------
+st.subheader("🤖 AI Insight")
 
-    st.subheader("🏭 Sector Overview")
-    st.write("Sector:", sector)
-    st.write(f"Competitor:", competitor)
-
-    # -----------------------------
-    # ESG Comparison
-    # -----------------------------
-    @st.cache_data
-    def calculate_esg(ticker):
-        h = yf.download(ticker, period=period, progress=False)
-        if h.empty:
-            return None
-
-        h["returns"] = h["Close"].pct_change()
-        h.dropna(inplace=True)
-
-        vol = h["returns"].std() * np.sqrt(252)
-        mean_ret = h["returns"].mean() * 252
-        sharpe = mean_ret / (vol + 1e-6)
-
-        return float(np.clip(
-            (1/(1+vol*8))*35 +
-            np.clip((mean_ret+0.2)/0.4,0,1)*30 +
-            np.clip((sharpe+2)/4,0,1)*35, 0, 100
-        ))
-
-    if competitor:
-        comp_score = calculate_esg(competitor)
-
-        fig_comp = go.Figure()
-        fig_comp.add_trace(go.Bar(x=[company], y=[esg_score]))
-        fig_comp.add_trace(go.Bar(x=[competitor], y=[comp_score]))
-
-        st.plotly_chart(fig_comp, use_container_width=True)
-
-    # -----------------------------
-    # AI Insight
-    # -----------------------------
-    st.subheader("🤖 AI Insight")
-
-    st.write(f"""
-**ESG Score:** {round(esg_score,2)}  
-**Volatility:** {round(volatility,3)}  
-**Return:** {round(mean_return*100,2)}%  
-**Sharpe:** {round(sharpe_ratio,2)}  
+st.write(f"""
+ESG Score: {round(esg_score,2)}  
+Volatility: {round(volatility,3)}  
+Return: {round(mean_return*100,2)}%  
+Sharpe: {round(sharpe_ratio,2)}
 """)
+
+# -----------------------------
+# DEEP ANALYSIS
+# -----------------------------
+if analysis_depth == "Deep Analysis":
+
+    st.subheader("🧠 Deep Analysis")
+
+    # Drawdown
+    hist["cum"] = (1 + hist["returns"]).cumprod()
+    hist["peak"] = hist["cum"].cummax()
+    hist["drawdown"] = (hist["cum"] - hist["peak"]) / hist["peak"]
+    max_dd = hist["drawdown"].min()
+
+    # Beta
+    market = yf.download("^GSPC", period=period, progress=False)
+    market["returns"] = market["Close"].pct_change()
+
+    df = pd.concat([hist["returns"], market["returns"]], axis=1).dropna()
+    df.columns = ["stock", "market"]
+
+    beta = df.cov().iloc[0,1] / df["market"].var()
+
+    # Rolling Sharpe
+    hist["rolling_sharpe"] = (
+        hist["returns"].rolling(30).mean() /
+        hist["returns"].rolling(30).std()
+    ) * np.sqrt(252)
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Max Drawdown", f"{round(max_dd*100,2)}%")
+    col2.metric("Beta", round(beta,2))
+    col3.metric("Sharpe", round(sharpe_ratio,2))
+
+    # Chart
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=hist.index,
+        y=hist["rolling_sharpe"],
+        name="Rolling Sharpe"
+    ))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # AI Interpretation
+    insight = ""
+
+    if beta > 1.2:
+        insight += "High market sensitivity. "
+    elif beta < 0.8:
+        insight += "Defensive stock behavior. "
+
+    if max_dd < -0.4:
+        insight += "High downside risk historically. "
+    else:
+        insight += "Strong downside protection. "
+
+    if sharpe_ratio > 1.5:
+        insight += "Strong risk-adjusted returns."
+    else:
+        insight += "Moderate performance."
+
+    st.markdown(f"### 🧠 AI Interpretation\n{insight}")
