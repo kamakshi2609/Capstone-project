@@ -3,6 +3,7 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import random
 
 st.set_page_config(page_title="AI ESG Proxy Dashboard", layout="wide")
 
@@ -35,7 +36,7 @@ period = st.sidebar.selectbox(
 )
 
 # -----------------------------
-# Sector Mapping (avoids rate limit)
+# Sector Mapping
 # -----------------------------
 ticker_sector_map = {
     "AAPL": "Technology",
@@ -50,14 +51,24 @@ ticker_sector_map = {
     "XOM": "Energy",
     "CVX": "Energy",
     "JNJ": "Healthcare",
-    "PFE": "Healthcare"
+    "PFE": "Healthcare",
+
+    # Indian Stocks
+    "RELIANCE.NS": "Energy",
+    "TCS.NS": "Technology",
+    "INFY.NS": "Technology",
+    "HDFCBANK.NS": "Financial Services",
+    "ICICIBANK.NS": "Financial Services",
+    "SBIN.NS": "Financial Services",
+    "ITC.NS": "Consumer Cyclical",
+    "HINDUNILVR.NS": "Consumer Cyclical"
 }
 
 sector_competitors = {
     "Technology": ["AAPL", "MSFT", "GOOGL", "NVDA"],
-    "Financial Services": ["JPM", "BAC", "WFC"],
-    "Energy": ["XOM", "CVX"],
-    "Consumer Cyclical": ["AMZN", "TSLA"],
+    "Financial Services": ["JPM", "BAC", "WFC", "HDFCBANK.NS", "ICICIBANK.NS"],
+    "Energy": ["XOM", "CVX", "RELIANCE.NS"],
+    "Consumer Cyclical": ["AMZN", "TSLA", "ITC.NS"],
     "Healthcare": ["JNJ", "PFE"]
 }
 
@@ -66,8 +77,7 @@ sector_competitors = {
 # -----------------------------
 @st.cache_data
 def load_data(ticker, period):
-    data = yf.download(ticker, period=period, progress=False)
-    return data
+    return yf.download(ticker, period=period, progress=False)
 
 if company:
 
@@ -91,13 +101,10 @@ if company:
     return_score = np.clip((mean_return + 0.2) / 0.4, 0, 1)
     sharpe_score = np.clip((sharpe_ratio + 2) / 4, 0, 1)
 
-    esg_score = (
+    esg_score = float(np.clip(
         vol_score * 35 +
         return_score * 30 +
-        sharpe_score * 35
-    )
-
-    esg_score = float(np.clip(esg_score, 0, 100))
+        sharpe_score * 35, 0, 100))
 
     # -----------------------------
     # ESG Gauge
@@ -120,6 +127,27 @@ if company:
 
     st.plotly_chart(gauge, use_container_width=True)
 
+    # -----------------------------
+    # Price Trend
+    # -----------------------------
+    st.subheader("📈 Price Trend")
+
+    hist["MA50"] = hist["Close"].rolling(50, min_periods=1).mean()
+
+    fig_price = go.Figure()
+    fig_price.add_trace(go.Scatter(
+        x=hist.index,
+        y=hist["Close"],
+        name="Close Price"
+    ))
+    fig_price.add_trace(go.Scatter(
+        x=hist.index,
+        y=hist["MA50"],
+        name="50-Day MA",
+        line=dict(dash="dash")
+    ))
+
+    st.plotly_chart(fig_price, use_container_width=True)
 
     # -----------------------------
     # Rolling Volatility
@@ -135,30 +163,34 @@ if company:
         name="Rolling Volatility"
     ))
 
-    fig_vol.update_layout(hovermode="x unified")
-
     st.plotly_chart(fig_vol, use_container_width=True)
 
     # -----------------------------
     # Sector & Competitor
     # -----------------------------
-    sector = ticker_sector_map.get(company, "Technology")
+    sector = ticker_sector_map.get(company)
+
+    if not sector:
+        if company.endswith(".NS"):
+            sector = "Financial Services"
+        else:
+            sector = "Unknown"
 
     competitor = None
     if sector in sector_competitors:
         possible = [c for c in sector_competitors[sector] if c != company]
-        competitor = possible[0] if possible else None
+        if possible:
+            competitor = random.choice(possible)
 
     st.subheader("🏭 Sector Overview")
     st.write("Sector:", sector)
-    st.write("Auto-Selected Competitor:", competitor)
+    st.write(f"Auto-Selected Competitor for {sector}:", competitor)
 
     # -----------------------------
     # ESG Comparison
     # -----------------------------
     @st.cache_data
     def calculate_esg(ticker):
-
         h = yf.download(ticker, period=period, progress=False)
 
         if h.empty:
@@ -175,11 +207,9 @@ if company:
         ret_s = np.clip((mean_ret + 0.2) / 0.4, 0, 1)
         sharpe_s = np.clip((sharpe + 2) / 4, 0, 1)
 
-        score = vol_s * 35 + ret_s * 30 + sharpe_s * 35
-        return float(np.clip(score, 0, 100))
+        return float(np.clip(vol_s*35 + ret_s*30 + sharpe_s*35, 0, 100))
 
     if competitor:
-
         comp_score = calculate_esg(competitor)
 
         st.subheader("📊 ESG Comparison")
@@ -188,79 +218,41 @@ if company:
         fig_comp.add_trace(go.Bar(x=[company], y=[esg_score], name=company))
         fig_comp.add_trace(go.Bar(x=[competitor], y=[comp_score], name=competitor))
 
-        fig_comp.update_layout(yaxis=dict(range=[0, 100]))
-
         st.plotly_chart(fig_comp, use_container_width=True)
 
     # -----------------------------
-    # AI Sustainability Insight
+    # AI Insight
     # -----------------------------
     st.subheader("🤖 AI Sustainability Insight")
 
-    if volatility < 0.20:
-        risk_label = "Low Risk"
-    elif volatility < 0.35:
-        risk_label = "Moderate Risk"
-    else:
-        risk_label = "High Risk"
+    risk_label = "Low Risk" if volatility < 0.20 else "Moderate Risk" if volatility < 0.35 else "High Risk"
 
-    if esg_score >= 75:
-        rating = "Sustainability Leader 🟢"
-    elif esg_score >= 55:
-        rating = "Sustainability Stable 🟡"
-    else:
-        rating = "Sustainability Risk 🔴"
+    rating = (
+        "Sustainability Leader 🟢" if esg_score >= 75 else
+        "Sustainability Stable 🟡" if esg_score >= 55 else
+        "Sustainability Risk 🔴"
+    )
 
-    if sharpe_ratio > 1.5:
-        performance_comment = "strong risk-adjusted efficiency"
-    elif sharpe_ratio > 0.8:
-        performance_comment = "moderate efficiency"
-    else:
-        performance_comment = "weak risk-adjusted structure"
-
-    if risk_preference == "Conservative":
-        alignment = "Suitable for conservative portfolios seeking stability." if volatility < 0.25 else "Volatility may exceed conservative tolerance."
-    elif risk_preference == "Balanced":
-        alignment = "Fits balanced portfolios blending growth and stability."
-    else:
-        alignment = "May appeal to aggressive investors targeting alpha."
+    performance_comment = (
+        "strong risk-adjusted efficiency" if sharpe_ratio > 1.5 else
+        "moderate efficiency" if sharpe_ratio > 0.8 else
+        "weak risk-adjusted structure"
+    )
 
     st.markdown(f"""
 ### 📊 Company: {company}
 
 **Sector:** {sector}  
-**ESG Proxy Score:** {round(esg_score,2)} / 100  
-**Risk Category:** {risk_label}  
-**Rating Tier:** {rating}
+**ESG Proxy Score:** {round(esg_score,2)}  
+
+**Risk:** {risk_label}  
+**Rating:** {rating}
 
 ---
 
-### 📈 Financial Signal Summary
+Return: **{round(mean_return*100,2)}%**  
+Volatility: **{round(volatility,3)}**  
+Sharpe: **{round(sharpe_ratio,2)}**
 
-• Annual Return: **{round(mean_return*100,2)}%**  
-• Annual Volatility: **{round(volatility,3)}**  
-• Sharpe Ratio: **{round(sharpe_ratio,2)}**
-
-The company demonstrates **{performance_comment}**.
-
----
-
-### 🎯 Investor Fit
-
-{alignment}
-""")
-
-    if analysis_depth == "Deep Analysis":
-
-        st.markdown(f"""
-### 🔬 Deep Breakdown
-
-**Stability Score:** {round(vol_score*100,1)}  
-**Growth Score:** {round(return_score*100,1)}  
-**Efficiency Score:** {round(sharpe_score*100,1)}
-
-Lower volatility often reflects disciplined governance and institutional confidence.  
-Higher Sharpe ratios indicate efficient capital allocation.
-
-Overall, {company} positions itself as a **{rating}** entity within the {sector} sector.
+This shows **{performance_comment}**.
 """)
