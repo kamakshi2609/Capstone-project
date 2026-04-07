@@ -16,7 +16,7 @@ st.markdown("Market-Signal Driven Sustainability Intelligence")
 # -----------------------------
 st.sidebar.header("⚙️ Select Parameters")
 
-company = st.sidebar.text_input("Enter Ticker").upper()
+company = st.sidebar.text_input("Enter Ticker", value="AAPL").upper()
 
 analysis_depth = st.sidebar.selectbox(
     "Analysis Type",
@@ -31,6 +31,13 @@ period = st.sidebar.selectbox(
 auto_refresh = st.sidebar.checkbox("🔄 Live Price Update (5 sec)")
 
 # -----------------------------
+# STOP if no ticker
+# -----------------------------
+if company == "":
+    st.warning("Please enter a ticker symbol")
+    st.stop()
+
+# -----------------------------
 # Sector Mapping
 # -----------------------------
 ticker_sector_map = {
@@ -39,7 +46,6 @@ ticker_sector_map = {
     "JPM": "Financial Services", "BAC": "Financial Services",
     "XOM": "Energy", "CVX": "Energy",
     "JNJ": "Healthcare", "PFE": "Healthcare",
-
     "RELIANCE.NS": "Energy",
     "TCS.NS": "Technology",
     "INFY.NS": "Technology",
@@ -56,16 +62,22 @@ sector_competitors = {
 }
 
 # -----------------------------
-# Load Data
+# Load Data (SAFE)
 # -----------------------------
 @st.cache_data
 def load_data(ticker, period):
-    return yf.download(ticker, period=period, progress=False)
+    try:
+        data = yf.download(ticker, period=period, progress=False)
+        if data is None or data.empty:
+            return pd.DataFrame()
+        return data
+    except:
+        return pd.DataFrame()
 
 hist = load_data(company, period)
 
-if hist.empty:
-    st.error("Invalid ticker")
+if hist is None or hist.empty:
+    st.error("❌ Invalid ticker or no data available. Try again.")
     st.stop()
 
 hist["returns"] = hist["Close"].pct_change()
@@ -115,15 +127,20 @@ st.subheader("📈 Live Price Trend")
 placeholder = st.empty()
 
 def load_live_data(ticker):
-    data = yf.download(ticker, period="1d", interval="1m", progress=False)
-    data["MA50"] = data["Close"].rolling(50).mean()
-    return data
+    try:
+        data = yf.download(ticker, period="1d", interval="1m", progress=False)
+        if data is None or data.empty:
+            return pd.DataFrame()
+        data["MA50"] = data["Close"].rolling(50).mean()
+        return data
+    except:
+        return pd.DataFrame()
 
-while True:
+for _ in range(1000):  # SAFE LOOP
     live = load_live_data(company)
 
     if live.empty:
-        st.warning("No live data")
+        st.warning("No live data available")
         break
 
     fig = go.Figure()
@@ -168,29 +185,36 @@ st.write("Competitor:", competitor)
 # -----------------------------
 @st.cache_data
 def calc_esg(ticker):
-    h = yf.download(ticker, period=period, progress=False)
-    if h.empty:
-        return None
-    h["returns"] = h["Close"].pct_change()
-    h.dropna(inplace=True)
-    vol = h["returns"].std() * np.sqrt(252)
-    mean = h["returns"].mean() * 252
-    sharpe = mean / (vol + 1e-6)
+    try:
+        h = yf.download(ticker, period=period, progress=False)
+        if h is None or h.empty:
+            return None
 
-    return float(np.clip(
-        (1/(1+vol*8))*35 +
-        np.clip((mean+0.2)/0.4,0,1)*30 +
-        np.clip((sharpe+2)/4,0,1)*35, 0, 100
-    ))
+        h["returns"] = h["Close"].pct_change()
+        h.dropna(inplace=True)
+
+        vol = h["returns"].std() * np.sqrt(252)
+        mean = h["returns"].mean() * 252
+        sharpe = mean / (vol + 1e-6)
+
+        return float(np.clip(
+            (1/(1+vol*8))*35 +
+            np.clip((mean+0.2)/0.4,0,1)*30 +
+            np.clip((sharpe+2)/4,0,1)*35, 0, 100
+        ))
+    except:
+        return None
 
 if competitor:
     comp_score = calc_esg(competitor)
 
-    fig = go.Figure()
-    fig.add_bar(x=[company], y=[esg_score])
-    fig.add_bar(x=[competitor], y=[comp_score])
-
-    st.plotly_chart(fig, use_container_width=True)
+    if comp_score is None:
+        st.warning("Competitor data not available")
+    else:
+        fig = go.Figure()
+        fig.add_bar(x=[company], y=[esg_score])
+        fig.add_bar(x=[competitor], y=[comp_score])
+        st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------
 # AI INSIGHT
@@ -211,22 +235,20 @@ if analysis_depth == "Deep Analysis":
 
     st.subheader("🧠 Deep Analysis")
 
-    # Drawdown
     hist["cum"] = (1 + hist["returns"]).cumprod()
     hist["peak"] = hist["cum"].cummax()
     hist["drawdown"] = (hist["cum"] - hist["peak"]) / hist["peak"]
     max_dd = hist["drawdown"].min()
 
-    # Beta
-    market = yf.download("^GSPC", period=period, progress=False)
-    market["returns"] = market["Close"].pct_change()
+    market = load_data("^GSPC", period)
+    if market.empty:
+        beta = np.nan
+    else:
+        market["returns"] = market["Close"].pct_change()
+        df = pd.concat([hist["returns"], market["returns"]], axis=1).dropna()
+        df.columns = ["stock", "market"]
+        beta = df.cov().iloc[0,1] / df["market"].var()
 
-    df = pd.concat([hist["returns"], market["returns"]], axis=1).dropna()
-    df.columns = ["stock", "market"]
-
-    beta = df.cov().iloc[0,1] / df["market"].var()
-
-    # Rolling Sharpe
     hist["rolling_sharpe"] = (
         hist["returns"].rolling(30).mean() /
         hist["returns"].rolling(30).std()
@@ -234,10 +256,9 @@ if analysis_depth == "Deep Analysis":
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Max Drawdown", f"{round(max_dd*100,2)}%")
-    col2.metric("Beta", round(beta,2))
+    col2.metric("Beta", "N/A" if np.isnan(beta) else round(beta,2))
     col3.metric("Sharpe", round(sharpe_ratio,2))
 
-    # Chart
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=hist.index,
@@ -249,10 +270,11 @@ if analysis_depth == "Deep Analysis":
     # AI Interpretation
     insight = ""
 
-    if beta > 1.2:
-        insight += "High market sensitivity. "
-    elif beta < 0.8:
-        insight += "Defensive stock behavior. "
+    if not np.isnan(beta):
+        if beta > 1.2:
+            insight += "High market sensitivity. "
+        elif beta < 0.8:
+            insight += "Defensive stock behavior. "
 
     if max_dd < -0.4:
         insight += "High downside risk historically. "
