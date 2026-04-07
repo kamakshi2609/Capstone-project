@@ -3,8 +3,6 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import random
-import time
 
 st.set_page_config(page_title="AI ESG Proxy Dashboard", layout="wide")
 
@@ -28,13 +26,8 @@ period = st.sidebar.selectbox(
     ["6mo", "1y", "2y"]
 )
 
-auto_refresh = st.sidebar.checkbox("🔄 Live Price Update (5 sec)")
-
-# -----------------------------
-# STOP if no ticker
-# -----------------------------
 if company == "":
-    st.warning("Please enter a ticker symbol")
+    st.warning("Please enter a ticker")
     st.stop()
 
 # -----------------------------
@@ -62,7 +55,7 @@ sector_competitors = {
 }
 
 # -----------------------------
-# Load Data (SAFE)
+# SAFE DATA LOAD
 # -----------------------------
 @st.cache_data
 def load_data(ticker, period):
@@ -76,15 +69,15 @@ def load_data(ticker, period):
 
 hist = load_data(company, period)
 
-if hist is None or hist.empty:
-    st.error("❌ Invalid ticker or no data available. Try again.")
+if hist.empty:
+    st.error("Invalid ticker or no data")
     st.stop()
 
 hist["returns"] = hist["Close"].pct_change()
 hist.dropna(inplace=True)
 
 # -----------------------------
-# ESG Score
+# ESG SCORE
 # -----------------------------
 volatility = hist["returns"].std() * np.sqrt(252)
 mean_return = hist["returns"].mean() * 252
@@ -99,7 +92,7 @@ esg_score = float(np.clip(
 ))
 
 # -----------------------------
-# ESG Gauge
+# ESG GAUGE
 # -----------------------------
 st.subheader("📊 ESG Proxy Score")
 
@@ -120,74 +113,55 @@ gauge = go.Figure(go.Indicator(
 st.plotly_chart(gauge, use_container_width=True)
 
 # -----------------------------
-# LIVE PRICE TREND
+# PRICE TREND (STATIC CLEAN)
 # -----------------------------
-st.subheader("📈 Live Price Trend")
+st.subheader("📈 Price Trend")
 
-placeholder = st.empty()
+fig = go.Figure()
 
-def load_live_data(ticker):
-    try:
-        data = yf.download(ticker, period="1d", interval="1m", progress=False)
-        if data is None or data.empty:
-            return pd.DataFrame()
-        data["MA50"] = data["Close"].rolling(50).mean()
-        return data
-    except:
-        return pd.DataFrame()
+fig.add_trace(go.Scatter(
+    x=hist.index,
+    y=hist["Close"],
+    name="Price"
+))
 
-for _ in range(1000):  # SAFE LOOP
-    live = load_live_data(company)
+fig.add_trace(go.Scatter(
+    x=hist.index,
+    y=hist["Close"].rolling(20).mean(),
+    name="MA20",
+    line=dict(dash="dash")
+))
 
-    if live.empty:
-        st.warning("No live data available")
-        break
-
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=live.index,
-        y=live["Close"],
-        name="Price"
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=live.index,
-        y=live["MA50"],
-        name="MA50",
-        line=dict(dash="dash")
-    ))
-
-    placeholder.plotly_chart(fig, use_container_width=True)
-
-    if not auto_refresh:
-        break
-
-    time.sleep(5)
+st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------
-# Sector + Competitor
+# COMPETITOR FIX (IMPORTANT)
 # -----------------------------
-sector = ticker_sector_map.get(company, "Unknown")
+sector = ticker_sector_map.get(company)
 
-competitor = None
-if sector in sector_competitors:
+# fallback logic
+if sector and sector in sector_competitors:
     comp_list = [c for c in sector_competitors[sector] if c != company]
-    if comp_list:
-        competitor = random.choice(comp_list)
+else:
+    # fallback: use all known tickers
+    comp_list = list(ticker_sector_map.keys())
+    comp_list = [c for c in comp_list if c != company]
+
+# ALWAYS pick first valid competitor
+competitor = comp_list[0] if comp_list else None
 
 st.subheader("🏭 Sector Overview")
-st.write("Sector:", sector)
+st.write("Sector:", sector if sector else "Unknown")
 st.write("Competitor:", competitor)
 
 # -----------------------------
-# ESG Comparison
+# ESG COMPARISON
 # -----------------------------
 @st.cache_data
 def calc_esg(ticker):
     try:
         h = yf.download(ticker, period=period, progress=False)
-        if h is None or h.empty:
+        if h.empty:
             return None
 
         h["returns"] = h["Close"].pct_change()
@@ -208,12 +182,10 @@ def calc_esg(ticker):
 if competitor:
     comp_score = calc_esg(competitor)
 
-    if comp_score is None:
-        st.warning("Competitor data not available")
-    else:
+    if comp_score:
         fig = go.Figure()
-        fig.add_bar(x=[company], y=[esg_score])
-        fig.add_bar(x=[competitor], y=[comp_score])
+        fig.add_bar(x=[company], y=[esg_score], name=company)
+        fig.add_bar(x=[competitor], y=[comp_score], name=competitor)
         st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------
@@ -241,23 +213,25 @@ if analysis_depth == "Deep Analysis":
     max_dd = hist["drawdown"].min()
 
     market = load_data("^GSPC", period)
-    if market.empty:
-        beta = np.nan
-    else:
+
+    if not market.empty:
         market["returns"] = market["Close"].pct_change()
         df = pd.concat([hist["returns"], market["returns"]], axis=1).dropna()
         df.columns = ["stock", "market"]
         beta = df.cov().iloc[0,1] / df["market"].var()
-
-    hist["rolling_sharpe"] = (
-        hist["returns"].rolling(30).mean() /
-        hist["returns"].rolling(30).std()
-    ) * np.sqrt(252)
+    else:
+        beta = np.nan
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Max Drawdown", f"{round(max_dd*100,2)}%")
     col2.metric("Beta", "N/A" if np.isnan(beta) else round(beta,2))
     col3.metric("Sharpe", round(sharpe_ratio,2))
+
+    # Rolling Sharpe
+    hist["rolling_sharpe"] = (
+        hist["returns"].rolling(30).mean() /
+        hist["returns"].rolling(30).std()
+    ) * np.sqrt(252)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -267,22 +241,22 @@ if analysis_depth == "Deep Analysis":
     ))
     st.plotly_chart(fig, use_container_width=True)
 
-    # AI Interpretation
+    # Interpretation
     insight = ""
 
     if not np.isnan(beta):
         if beta > 1.2:
             insight += "High market sensitivity. "
         elif beta < 0.8:
-            insight += "Defensive stock behavior. "
+            insight += "Defensive behavior. "
 
     if max_dd < -0.4:
-        insight += "High downside risk historically. "
+        insight += "High downside risk. "
     else:
         insight += "Strong downside protection. "
 
     if sharpe_ratio > 1.5:
-        insight += "Strong risk-adjusted returns."
+        insight += "Strong returns."
     else:
         insight += "Moderate performance."
 
