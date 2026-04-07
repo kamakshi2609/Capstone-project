@@ -77,6 +77,68 @@ hist["returns"] = hist["Close"].pct_change()
 hist.dropna(inplace=True)
 
 # -----------------------------
+# INTRADAY PRICE TREND (FIXED)
+# -----------------------------
+st.subheader("📈 Intraday Price Trend (Today)")
+
+@st.cache_data
+def load_intraday(ticker):
+    try:
+        data = yf.download(
+            ticker,
+            period="1d",
+            interval="1m",
+            progress=False
+        )
+
+        if data is None or data.empty:
+            return pd.DataFrame()
+
+        data["MA20"] = data["Close"].rolling(20).mean()
+        data["MA50"] = data["Close"].rolling(50).mean()
+
+        return data
+
+    except:
+        return pd.DataFrame()
+
+intraday = load_intraday(company)
+
+if intraday.empty:
+    st.warning("Intraday data not available")
+else:
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=intraday.index,
+        y=intraday["Close"],
+        name="Price",
+        line=dict(width=2)
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=intraday.index,
+        y=intraday["MA20"],
+        name="MA20",
+        line=dict(dash="dash")
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=intraday.index,
+        y=intraday["MA50"],
+        name="MA50",
+        line=dict(dash="dot")
+    ))
+
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title="Price",
+        template="plotly_white"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+# -----------------------------
 # ESG SCORE
 # -----------------------------
 volatility = hist["returns"].std() * np.sqrt(252)
